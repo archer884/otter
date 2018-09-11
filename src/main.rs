@@ -12,6 +12,8 @@ struct Config {
     path: Option<String>,
     #[structopt(short = "o", long = "offset")]
     offset: Option<u8>,
+    #[structopt(short = "r", long = "reverse")]
+    reverse: bool,
 }
 
 impl Config {
@@ -20,7 +22,7 @@ impl Config {
 
         let mapping = match self.offset {
             None => Left(Rot13),
-            Some(n) => Right(RotBy::new(n)),
+            Some(n) => Right(RotBy::new(n, self.reverse)),
         };
 
         let source = match self.path {
@@ -136,8 +138,12 @@ impl Mapping for Rot13 {
 struct RotBy(u8);
 
 impl RotBy {
-    fn new(n: u8) -> Self {
-        RotBy(n)
+    fn new(n: u8, reverse: bool) -> Self {
+        if reverse {
+            RotBy(26 - n)
+        } else {
+            RotBy(n)
+        }
     }
 
     // FIXME: I worry how this will handle negative offsets.
@@ -208,7 +214,13 @@ mod tests {
 
     #[test]
     fn rot_by_1() {
-        let mapping = RotBy::new(1);
+        let mapping = RotBy::new(1, false);
         assert_eq!("Ifmmp, xpsme!", &*mapping.map_str("Hello, world!"));
+    }
+
+    #[test]
+    fn unrot_by_1() {
+        let mapping = RotBy::new(1, true);
+        assert_eq!("Hello, world!", &*mapping.map_str("Ifmmp, xpsme!"));
     }
 }
