@@ -145,8 +145,7 @@ impl RotBy {
             RotBy(n)
         }
     }
-
-    // FIXME: I worry how this will handle negative offsets.
+    
     fn shift(&self, u: u8) -> u8 {
         (u + self.0) % 26
     }
@@ -181,12 +180,6 @@ fn main() -> io::Result<()> {
     let application = config.build()?;
 
     application.run()
-
-    // for message in grabinput::from_stdin() {
-    //     print!("{}", Rot13.map_str(&message));
-    // }
-
-    // io::stdout().flush()
 }
 
 /// Converts a byte to a lowercase-ish byte by setting the 32-bit if it is not set.
