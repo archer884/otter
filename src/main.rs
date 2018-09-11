@@ -1,12 +1,94 @@
-extern crate grabinput;
+extern crate either;
+extern crate structopt;
 
-use std::io::{self, Write};
+use either::Either;
+use std::fs::File;
+use std::io::{self, Read};
+use structopt::StructOpt;
+
+#[derive(Debug, StructOpt)]
+struct Config {
+    #[structopt(short = "p", long = "path")]
+    path: Option<String>,
+    #[structopt(short = "o", long = "offset")]
+    offset: Option<i16>,
+}
+
+impl Config {
+    fn build(&self) -> io::Result<Application> {
+        use either::Either::*;
+
+        let mapping = match self.offset {
+            None => Left(Rot13),
+            Some(n) => Right(RotBy::new(n)),
+        };
+
+        let source = match self.path {
+            None => None,
+            Some(ref path) => Some(File::open(path)?),
+        };
+        
+        Ok(Application { mapping, source })
+    }
+}
+
+struct MappingTransform<M, R> {
+    mapping: M,
+    stream: R,
+}
+
+impl<M, R> MappingTransform<M, R> {
+    fn new(mapping: M, stream: R) -> Self {
+        MappingTransform { mapping, stream }
+    }
+}
+
+impl<M, R> Read for MappingTransform<M, R>
+where
+    M: Mapping,
+    R: Read,
+{
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let result = self.stream.read(buf)?;
+        for place in buf.iter_mut() {
+            match self.mapping.get(*place) {
+                None => (),
+                Some(replace_with) => *place = replace_with,
+            }
+        }
+        Ok(result)
+    }
+}
+
+struct Application {
+    mapping: Either<Rot13, RotBy>,
+    source: Option<File>,
+}
+
+impl Application {
+    fn run(self) -> io::Result<()> {
+        let Self { mapping, source } = self;
+
+        match source {
+            None => map_input(mapping, io::stdin())?,
+            Some(file) => map_input(mapping, file)?,
+        };
+
+        Ok(())
+    }
+}
+
+fn map_input(mapping: impl Mapping, input: impl Read) -> io::Result<u64> {
+    io::copy(&mut MappingTransform::new(mapping, input), &mut io::stdout())
+}
 
 trait Mapping {
     fn get(&self, u: u8) -> Option<u8>;
 
     fn map_str(&self, s: &str) -> String {
-        s.bytes().map(|u| self.get(u).unwrap_or(u) as char).collect()
+        s.bytes()
+            .map(|u| self.get(u).unwrap_or(u) as char)
+            .collect()
     }
 }
 
@@ -14,49 +96,101 @@ struct Rot13;
 
 impl Mapping for Rot13 {
     fn get(&self, u: u8) -> Option<u8> {
-        match to_lowerish(u) {
-            b'a' => Some(set_case(b'n', u)),
-            b'b' => Some(set_case(b'o', u)),
-            b'c' => Some(set_case(b'p', u)),
-            b'd' => Some(set_case(b'q', u)),
-            b'e' => Some(set_case(b'r', u)),
-            b'f' => Some(set_case(b's', u)),
-            b'g' => Some(set_case(b't', u)),
-            b'h' => Some(set_case(b'u', u)),
-            b'i' => Some(set_case(b'v', u)),
-            b'j' => Some(set_case(b'w', u)),
-            b'k' => Some(set_case(b'x', u)),
-            b'l' => Some(set_case(b'y', u)),
-            b'm' => Some(set_case(b'z', u)),
-            b'n' => Some(set_case(b'a', u)),
-            b'o' => Some(set_case(b'b', u)),
-            b'p' => Some(set_case(b'c', u)),
-            b'q' => Some(set_case(b'd', u)),
-            b'r' => Some(set_case(b'e', u)),
-            b's' => Some(set_case(b'f', u)),
-            b't' => Some(set_case(b'g', u)),
-            b'u' => Some(set_case(b'h', u)),
-            b'v' => Some(set_case(b'i', u)),
-            b'w' => Some(set_case(b'j', u)),
-            b'x' => Some(set_case(b'k', u)),
-            b'y' => Some(set_case(b'l', u)),
-            b'z' => Some(set_case(b'm', u)),
+        fn try_map(u: u8) -> Option<u8> {
+            match u {
+                b'a' => Some(b'n'),
+                b'b' => Some(b'o'),
+                b'c' => Some(b'p'),
+                b'd' => Some(b'q'),
+                b'e' => Some(b'r'),
+                b'f' => Some(b's'),
+                b'g' => Some(b't'),
+                b'h' => Some(b'u'),
+                b'i' => Some(b'v'),
+                b'j' => Some(b'w'),
+                b'k' => Some(b'x'),
+                b'l' => Some(b'y'),
+                b'm' => Some(b'z'),
+                b'n' => Some(b'a'),
+                b'o' => Some(b'b'),
+                b'p' => Some(b'c'),
+                b'q' => Some(b'd'),
+                b'r' => Some(b'e'),
+                b's' => Some(b'f'),
+                b't' => Some(b'g'),
+                b'u' => Some(b'h'),
+                b'v' => Some(b'i'),
+                b'w' => Some(b'j'),
+                b'x' => Some(b'k'),
+                b'y' => Some(b'l'),
+                b'z' => Some(b'm'),
 
+                _ => None,
+            }
+        }
+
+        try_map(to_lowerish(u)).map(|new| set_case(new, u))
+    }
+}
+
+struct RotBy(i16);
+
+impl RotBy {
+    fn new(n: i16) -> Self {
+        let n = if n > 0 {
+            n % 26
+        } else {
+            -((-n) % 26)
+        };
+
+        RotBy(n)
+    }
+
+    // FIXME: I worry how this will handle negative offsets.
+    fn shift(&self, u: u8) -> u8 {
+        ((u as i16 + self.0) % 26) as u8
+    }
+}
+
+impl Mapping for RotBy {
+    fn get(&self, u: u8) -> Option<u8> {
+        const OFFSET: u8 = b'a';
+
+        let result = match to_lowerish(u) {
+            letter @ b'a'...b'z' => Some(self.shift(letter - OFFSET) + OFFSET),
             _ => None,
+        };
+
+        result.map(|new| set_case(new, u))
+    }
+}
+
+impl Mapping for Either<Rot13, RotBy> {
+    fn get(&self, u: u8) -> Option<u8> {
+        use either::Either::*;
+        
+        match *self {
+            Left(ref mapping) => mapping.get(u),
+            Right(ref mapping) => mapping.get(u),
         }
     }
 }
 
 fn main() -> io::Result<()> {
-    for message in grabinput::from_stdin() {
-        print!("{}", Rot13.map_str(&message));
-    }
+    let config = Config::from_args();
+    let application = config.build()?;
 
-    io::stdout().flush()
+    application.run()
+
+    // for message in grabinput::from_stdin() {
+    //     print!("{}", Rot13.map_str(&message));
+    // }
+
+    // io::stdout().flush()
 }
 
 /// Converts a byte to a lowercase-ish byte by setting the 32-bit if it is not set.
-/// 
+///
 /// In theory, this works because the difference between upper- and lower-case ASCII characters
 /// is the state of the 32-bit.
 fn to_lowerish(u: u8) -> u8 {
@@ -64,12 +198,29 @@ fn to_lowerish(u: u8) -> u8 {
 }
 
 /// Sets the case of a byte based on the case of the original byte.
-/// 
+///
 /// In theory, this one works by magic. Gfy.
 fn set_case(u_new: u8, u_original: u8) -> u8 {
     if u_original | 32 == u_original {
         u_new
     } else {
         u_new & 0b11011111
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Mapping, RotBy};
+
+    #[test]
+    fn rot_by_1() {
+        let mapping = RotBy::new(1);
+        assert_eq!("Ifmmp, xpsme!", &*mapping.map_str("Hello, world!"));
+    }
+
+    #[test]
+    fn unrot_by_1() {
+        let mapping = RotBy::new(-1);
+        assert_eq!("Hello, world!", &*mapping.map_str("Ifmmp, xpsme!"));
     }
 }
